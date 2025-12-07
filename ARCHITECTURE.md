@@ -47,11 +47,14 @@
 network_backend/
 ├── app/                           # 应用主目录
 │   ├── api/                       # API 路由层
-│   │   ├── deps.py               # 依赖注入函数
+│   │   ├── deps.py               # 依赖注入函数（用户认证、设备认证）
 │   │   └── v1/                   # API v1 版本
 │   │       ├── endpoints/        # 具体的路由端点
 │   │       │   ├── health.py    # 健康检查接口
-│   │       │   └── package.py   # 包裹相关接口
+│   │       │   ├── package.py   # 包裹数据上传和查询接口
+│   │       │   ├── auth.py      # 用户认证接口（注册、登录）
+│   │       │   ├── user_packages.py  # 用户包裹管理接口
+│   │       │   └── device.py   # 设备管理接口
 │   │       └── router.py         # 路由聚合器
 │   │
 │   ├── core/                      # 核心配置层
@@ -59,20 +62,29 @@ network_backend/
 │   │   └── database.py           # 数据库连接和会话管理
 │   │
 │   ├── models/                    # 数据模型层（ORM）
-│   │   └── package.py            # PackageRecord 模型
+│   │   ├── package.py            # PackageRecord 模型
+│   │   ├── user.py               # User、UserPackage 模型
+│   │   └── device.py             # Device 模型
 │   │
 │   ├── schemas/                   # 数据验证层（Pydantic）
 │   │   ├── common.py             # 通用响应模型
-│   │   └── package.py            # 包裹数据模型
+│   │   ├── package.py            # 包裹数据模型
+│   │   ├── user.py               # 用户数据模型
+│   │   └── device.py             # 设备数据模型
 │   │
 │   ├── services/                  # 业务逻辑层
-│   │   └── package_service.py    # 包裹业务逻辑
+│   │   ├── package_service.py    # 包裹业务逻辑
+│   │   └── user.py               # 用户和包裹绑定业务逻辑
 │   │
 │   ├── repositories/              # 数据访问层
-│   │   └── package_repository.py # 包裹数据库操作
+│   │   ├── package_repository.py # 包裹数据库操作
+│   │   ├── user.py               # 用户和包裹绑定数据库操作
+│   │   └── device_repository.py  # 设备数据库操作
 │   │
 │   ├── utils/                     # 工具层
 │   │   ├── logger.py             # 日志配置
+│   │   ├── auth.py               # JWT 认证工具
+│   │   ├── security.py           # HMAC-SHA256 签名工具
 │   │   └── exceptions.py         # 自定义异常
 │   │
 │   └── main.py                    # 应用入口（FastAPI 实例）
@@ -103,25 +115,47 @@ network_backend/
 ### 请求处理流程
 
 ```
-1. ESP32 发送 HTTP POST 请求
+1. ESP32 发送 HTTP POST 请求（带设备认证头）
    ↓
 2. FastAPI 路由层接收请求 (package.py)
    ↓
-3. Pydantic 自动验证请求数据 (schemas/package.py)
+3. 设备认证中间件验证 (deps.py → verify_device_authentication)
+   - 验证 X-Device-ID、X-Signature、X-Timestamp
+   - 检查设备是否存在且激活
+   - 验证 HMAC-SHA256 签名
    ↓
-4. 路由层调用业务逻辑层 (package_service.py)
+4. Pydantic 自动验证请求数据 (schemas/package.py)
    ↓
-5. 业务层执行业务逻辑（温度检查、日志记录等）
+5. 路由层调用业务逻辑层 (package_service.py)
    ↓
-6. 业务层调用数据访问层 (package_repository.py)
+6. 业务层执行业务逻辑（温度检查、日志记录等）
    ↓
-7. 数据访问层执行 SQL 操作（通过 SQLAlchemy ORM）
+7. 业务层调用数据访问层 (package_repository.py)
    ↓
-8. 数据保存到 MySQL 数据库
+8. 数据访问层执行 SQL 操作（通过 SQLAlchemy ORM）
    ↓
-9. 逐层返回结果
+9. 数据保存到 MySQL 数据库
    ↓
-10. 路由层返回 JSON 响应给 ESP32
+10. 逐层返回结果
+   ↓
+11. 路由层返回 JSON 响应给 ESP32
+
+用户查询流程：
+1. 用户发送 HTTP GET 请求（带 JWT Token）
+   ↓
+2. FastAPI 路由层接收请求 (package.py)
+   ↓
+3. JWT 认证中间件验证 (deps.py → get_current_user)
+   - 验证 Token 有效性
+   - 提取用户信息
+   ↓
+4. 权限检查（检查包裹所有权）
+   - 查询 user_packages 表
+   - 验证用户是否绑定该包裹
+   ↓
+5. 查询包裹记录
+   ↓
+6. 返回结果给用户
 ```
 
 ### 示例：上传数据的完整流程
@@ -131,16 +165,31 @@ network_backend/
 @router.post("/upload")
 async def upload_package_data(
     payload: PackageUploadRequest,  # 2. Pydantic 自动验证
+    device: Device = Depends(verify_device_authentication),  # 设备认证
     service: PackageService = Depends(get_package_service)  # 3. 依赖注入
 ):
     result = service.save_package_data(payload)  # 4. 调用业务层
     return result
 
+# 设备认证 (app/api/deps.py)
+async def verify_device_authentication(
+    x_device_id: str = Header(...),
+    x_signature: str = Header(...),
+    x_timestamp: int = Header(...),
+    payload: PackageUploadRequest,
+    device_repo: DeviceRepository = Depends(get_device_repository)
+) -> Device:
+    # 验证设备ID、签名、时间戳
+    device = device_repo.get_by_device_id(x_device_id)
+    # 验证 HMAC-SHA256 签名
+    verify_hmac_signature(sign_data, x_signature, device.secret_key)
+    return device
+
 # 5. 业务逻辑层 (app/services/package_service.py)
 class PackageService:
     def save_package_data(self, data: PackageUploadRequest):
         # 6. 业务逻辑：温度检查
-        self._check_temperature_alert(data.package_id, data.temperature)
+        self._check_temperature_alert(data.package_id, data.max_temperature)
         
         # 7. 调用数据访问层
         record = self.repository.create(data)
@@ -152,7 +201,13 @@ class PackageService:
 class PackageRepository:
     def create(self, data: PackageUploadRequest):
         # 10. 创建 ORM 对象
-        db_record = PackageRecord(**data.dict())
+        db_record = PackageRecord(
+            package_id=data.package_id,
+            max_temperature=data.max_temperature,
+            avg_humidity=data.avg_humidity,
+            over_threshold_time=data.over_threshold_time,
+            timestamp=data.timestamp
+        )
         
         # 11. 保存到数据库
         self.db.add(db_record)
@@ -177,7 +232,7 @@ class PackageRepository:
 ```python
 def save_package_data(self, data: PackageUploadRequest) -> Dict[str, Any]:
     """
-    保存包裹数据的业务逻辑
+    保存包裹站点数据的业务逻辑
     
     业务流程：
     1. 温度异常检测（高温/低温告警）
@@ -187,6 +242,11 @@ def save_package_data(self, data: PackageUploadRequest) -> Dict[str, Any]:
     
     Args:
         data: 包裹上传数据（已通过 Pydantic 验证）
+            - package_id: 包裹ID
+            - max_temperature: 最高温度
+            - avg_humidity: 平均湿度
+            - over_threshold_time: 超阈值时间
+            - timestamp: Unix时间戳
         
     Returns:
         包含状态、消息和记录ID的字典
@@ -196,7 +256,7 @@ def save_package_data(self, data: PackageUploadRequest) -> Dict[str, Any]:
     """
     
     # 步骤1：温度异常检测
-    self._check_temperature_alert(data.package_id, data.temperature)
+    self._check_temperature_alert(data.package_id, data.max_temperature)
     
     # 步骤2：保存数据
     try:
@@ -205,7 +265,8 @@ def save_package_data(self, data: PackageUploadRequest) -> Dict[str, Any]:
         # 步骤3：记录日志
         logger.info(
             f"Package data saved - ID: {data.package_id}, "
-            f"Temp: {data.temperature}°C, Timestamp: {data.timestamp}"
+            f"MaxTemp: {data.max_temperature}°C, AvgHumidity: {data.avg_humidity}%, "
+            f"OverTime: {data.over_threshold_time}s, Timestamp: {data.timestamp}"
         )
         
         # 步骤4：返回结果
@@ -232,7 +293,7 @@ def _check_temperature_alert(self, package_id: int, temperature: float) -> None:
     
     Args:
         package_id: 包裹ID
-        temperature: 温度值
+        temperature: 最高温度值
     """
     if temperature > settings.TEMP_HIGH_THRESHOLD:
         logger.warning(
@@ -251,81 +312,165 @@ def _check_temperature_alert(self, package_id: int, temperature: float) -> None:
 
 ---
 
-### 2. 历史查询业务逻辑
+### 2. 历史查询业务逻辑（带权限控制）
 
-**位置**: `app/services/package_service.py` → `get_package_history()`
+**位置**: `app/api/v1/endpoints/package.py` → `get_package_history()`
 
-**功能**：查询指定包裹的历史温度记录
+**功能**：查询指定包裹的所有站点记录（需要用户认证和权限检查）
 
 **业务规则**：
 
 ```python
-def get_package_history(
-    self, 
-    package_id: int, 
-    limit: int = 100,
-    offset: int = 0
-) -> PackageHistoryResponse:
+@router.get("/packages/{package_id}/records")
+async def get_package_history(
+    package_id: int,
+    current_user: TokenData = Depends(get_current_user),  # 用户认证
+    service: PackageService = Depends(get_package_service),
+    user_package_repo: UserPackageRepository = Depends(get_user_package_repository)
+):
     """
-    获取包裹历史记录
+    获取包裹的所有站点记录（需要登录，只能查看自己的包裹）
     
     业务流程：
-    1. 查询数据库获取记录列表（按时间倒序）
-    2. 统计总记录数
-    3. 转换为响应模型
+    1. 用户认证（JWT Token验证）
+    2. 权限检查（检查包裹所有权）
+    3. 查询数据库获取记录列表（按时间倒序）
+    4. 统计总记录数
+    5. 转换为响应模型
     
     Args:
         package_id: 包裹ID
-        limit: 返回记录数量限制（1-1000）
-        offset: 偏移量（用于分页）
+        current_user: 当前登录用户（从JWT Token提取）
+        service: 包裹业务服务
+        user_package_repo: 用户包裹关联仓库
         
     Returns:
         包含包裹ID、总记录数和记录列表的响应对象
+        
+    Raises:
+        HTTPException 403: 用户未绑定该包裹
     """
-    # 步骤1：查询记录（按时间戳倒序）
-    records = self.repository.get_by_package_id(package_id, limit, offset)
+    # 步骤1：检查包裹所有权
+    if not user_package_repo.check_package_ownership(current_user.user_id, package_id):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Access denied: You don't have permission to view package {package_id}"
+        )
     
-    # 步骤2：统计总数
-    total = self.repository.count_by_package_id(package_id)
+    # 步骤2：查询记录
+    history = service.get_package_history(package_id, limit, offset)
+    return history
+```
+
+**权限检查逻辑**：
+
+```python
+# app/repositories/user.py
+def check_package_ownership(self, user_id: int, package_id: int) -> bool:
+    """
+    检查用户是否拥有指定包裹的访问权限
     
-    # 步骤3：转换为响应模型
-    return PackageHistoryResponse(
-        package_id=package_id,
-        total_records=total,
-        records=[PackageRecordResponse.model_validate(r) for r in records]
-    )
+    SQL 操作：
+    SELECT * FROM user_packages
+    WHERE user_id = ? AND package_id = ? AND is_active = TRUE
+    
+    Args:
+        user_id: 用户ID
+        package_id: 包裹ID
+        
+    Returns:
+        True 如果用户已绑定该包裹，否则 False
+    """
+    return self.db.query(UserPackage).filter(
+        and_(
+            UserPackage.user_id == user_id,
+            UserPackage.package_id == package_id,
+            UserPackage.is_active == True
+        )
+    ).first() is not None
 ```
 
 ---
 
-### 3. 最新记录查询逻辑
+### 3. 设备认证逻辑
 
-**位置**: `app/services/package_service.py` → `get_latest_record()`
+**位置**: `app/api/deps.py` → `verify_device_authentication()`
 
-**功能**：获取指定包裹的最新温度记录
+**功能**：验证ESP32设备的身份和签名
 
 **业务规则**：
 
 ```python
-def get_latest_record(self, package_id: int) -> PackageRecordResponse | None:
+async def verify_device_authentication(
+    request: Request,
+    payload: PackageUploadRequest,
+    x_device_id: Optional[str] = Header(None, alias="X-Device-ID"),
+    x_signature: Optional[str] = Header(None, alias="X-Signature"),
+    x_timestamp: Optional[int] = Header(None, alias="X-Timestamp"),
+    device_repo: DeviceRepository = Depends(get_device_repository)
+) -> Device:
     """
-    获取包裹最新记录
+    验证设备身份和签名
     
-    业务流程：
-    1. 查询数据库获取最新记录（按时间戳倒序取第一条）
-    2. 转换为响应模型
+    验证流程：
+    1. 检查请求头是否包含必要字段
+    2. 通过 device_id 查找设备
+    3. 检查设备是否激活
+    4. 构建签名字符串
+    5. 验证 HMAC-SHA256 签名
+    6. 验证时间戳（防重放攻击，允许±5分钟误差）
+    7. 更新设备最后活跃时间
     
     Args:
-        package_id: 包裹ID
+        x_device_id: 设备ID（请求头）
+        x_signature: HMAC签名（请求头）
+        x_timestamp: 时间戳（请求头）
+        payload: 请求体数据
+        device_repo: 设备仓库
         
     Returns:
-        最新记录对象，如果不存在则返回 None
+        验证通过的设备对象
+        
+    Raises:
+        HTTPException 401: 设备ID无效、签名错误或时间戳超出范围
+        HTTPException 403: 设备未激活
     """
-    record = self.repository.get_latest_by_package_id(package_id)
+    # 1. 检查请求头
+    if not x_device_id or not x_signature or not x_timestamp:
+        raise HTTPException(401, detail="Missing authentication headers")
     
-    if record:
-        return PackageRecordResponse.model_validate(record)
-    return None
+    # 2. 查找设备
+    device = device_repo.get_by_device_id(x_device_id)
+    if not device:
+        raise HTTPException(401, detail="Invalid device ID")
+    
+    # 3. 检查设备状态
+    if not device.is_active:
+        raise HTTPException(403, detail="Device is not active")
+    
+    # 4. 构建签名字符串
+    sign_data = build_signature_data(
+        package_id=payload.package_id,
+        max_temperature=payload.max_temperature,
+        avg_humidity=payload.avg_humidity,
+        over_threshold_time=payload.over_threshold_time,
+        timestamp=payload.timestamp
+    )
+    
+    # 5. 验证签名
+    if not verify_hmac_signature(sign_data, x_signature, device.secret_key):
+        raise HTTPException(401, detail="Invalid signature")
+    
+    # 6. 验证时间戳（防重放攻击）
+    current_timestamp = int(datetime.now().timestamp())
+    time_diff = abs(current_timestamp - x_timestamp)
+    if time_diff > 300:  # 5分钟 = 300秒
+        raise HTTPException(401, detail=f"Timestamp out of range (diff: {time_diff}s)")
+    
+    # 7. 更新最后活跃时间
+    device_repo.update_last_seen(x_device_id)
+    
+    return device
 ```
 
 ---
@@ -348,8 +493,8 @@ def create(self, data: PackageUploadRequest) -> PackageRecord:
     创建新的包裹记录
     
     SQL 操作：
-    INSERT INTO package_records (package_id, temperature, timestamp)
-    VALUES (?, ?, ?)
+    INSERT INTO package_records (package_id, max_temperature, avg_humidity, over_threshold_time, timestamp)
+    VALUES (?, ?, ?, ?, ?)
     
     Args:
         data: 包裹上传数据
@@ -359,7 +504,9 @@ def create(self, data: PackageUploadRequest) -> PackageRecord:
     """
     db_record = PackageRecord(
         package_id=data.package_id,
-        temperature=data.temperature,
+        max_temperature=data.max_temperature,
+        avg_humidity=data.avg_humidity,
+        over_threshold_time=data.over_threshold_time,
         timestamp=data.timestamp
     )
     self.db.add(db_record)
@@ -463,7 +610,7 @@ def get_latest_by_package_id(self, package_id: int) -> Optional[PackageRecord]:
 
 ```python
 class PackageUploadRequest(BaseModel):
-    """包裹数据上传请求模型"""
+    """包裹环境监测数据上传请求模型"""
     
     # 包裹ID验证
     package_id: int = Field(
@@ -473,13 +620,30 @@ class PackageUploadRequest(BaseModel):
         example=1001
     )
     
-    # 温度验证
-    temperature: float = Field(
+    # 最高温度验证
+    max_temperature: float = Field(
         ...,                    # 必填
         ge=-50.0,              # 大于等于 -50
         le=100.0,              # 小于等于 100
-        description="温度值(°C)，范围: -50 ~ 100",
-        example=24.5
+        description="最高温度值(°C)，范围: -50 ~ 100",
+        example=28.5
+    )
+    
+    # 平均湿度验证
+    avg_humidity: float = Field(
+        ...,                    # 必填
+        ge=0.0,                # 大于等于 0
+        le=100.0,              # 小于等于 100
+        description="平均湿度值(%)，范围: 0 ~ 100",
+        example=65.2
+    )
+    
+    # 超阈值时间验证
+    over_threshold_time: int = Field(
+        ...,                    # 必填
+        ge=0,                  # 必须大于等于0
+        description="超阈值时间(秒)，必须为非负整数",
+        example=3600
     )
     
     # 时间戳验证
@@ -600,7 +764,7 @@ if temperature > settings.TEMP_HIGH_THRESHOLD:
 
 ### 场景1：添加新的数据字段
 
-**需求**：在包裹记录中添加"湿度"字段
+**需求**：在包裹记录中添加"最低温度"字段
 
 **步骤**：
 
@@ -612,8 +776,10 @@ class PackageRecord(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     package_id = Column(Integer, nullable=False, index=True)
-    temperature = Column(Float, nullable=False)
-    humidity = Column(Float, nullable=True)  # ← 新增字段
+    max_temperature = Column(Float, nullable=False)
+    min_temperature = Column(Float, nullable=True)  # ← 新增字段
+    avg_humidity = Column(Float, nullable=False)
+    over_threshold_time = Column(Integer, nullable=False)
     timestamp = Column(BigInteger, nullable=False)
     created_at = Column(DateTime, server_default=func.now())
 ```
@@ -623,15 +789,17 @@ class PackageRecord(Base):
 ```python
 class PackageUploadRequest(BaseModel):
     package_id: int = Field(..., gt=0)
-    temperature: float = Field(..., ge=-50.0, le=100.0)
-    humidity: float = Field(..., ge=0.0, le=100.0)  # ← 新增字段
+    max_temperature: float = Field(..., ge=-50.0, le=100.0)
+    min_temperature: float = Field(None, ge=-50.0, le=100.0)  # ← 新增字段（可选）
+    avg_humidity: float = Field(..., ge=0.0, le=100.0)
+    over_threshold_time: int = Field(..., ge=0)
     timestamp: int = Field(..., gt=0)
 ```
 
 3. **创建数据库迁移**
 
 ```bash
-alembic revision --autogenerate -m "Add humidity field"
+alembic revision --autogenerate -m "Add min_temperature field"
 alembic upgrade head
 ```
 
@@ -639,9 +807,11 @@ alembic upgrade head
 
 ```python
 def save_package_data(self, data: PackageUploadRequest):
-    # 可以添加湿度检查逻辑
-    if data.humidity > 80:
-        logger.warning(f"High humidity alert: {data.humidity}%")
+    # 可以添加温度范围检查逻辑
+    if data.min_temperature and data.max_temperature:
+        temp_range = data.max_temperature - data.min_temperature
+        if temp_range > 20:
+            logger.warning(f"Large temperature range: {temp_range}°C")
     
     record = self.repository.create(data)
     return {"status": "success", "record_id": record.id}
@@ -774,21 +944,66 @@ async def _check_temperature_alert(self, package_id: int, temperature: float):
 CREATE TABLE `package_records` (
   `id` INT AUTO_INCREMENT PRIMARY KEY COMMENT '记录ID',
   `package_id` INT NOT NULL COMMENT '包裹ID',
-  `temperature` FLOAT NOT NULL COMMENT '温度值(°C)',
+  `max_temperature` FLOAT NOT NULL COMMENT '最高温度(°C)',
+  `avg_humidity` FLOAT NOT NULL COMMENT '平均湿度(%)',
+  `over_threshold_time` INT NOT NULL COMMENT '超阈值时间(秒)',
   `timestamp` BIGINT NOT NULL COMMENT 'Unix时间戳',
   `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '记录创建时间',
   
-  INDEX `idx_package_id` (`package_id`),
-  INDEX `idx_timestamp` (`timestamp`),
   INDEX `idx_package_timestamp` (`package_id`, `timestamp`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='包裹温度记录表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='包裹环境监测记录表';
+
+CREATE TABLE `users` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY COMMENT '用户ID',
+  `username` VARCHAR(50) UNIQUE NOT NULL COMMENT '用户名',
+  `email` VARCHAR(100) COMMENT '邮箱',
+  `password_hash` VARCHAR(255) NOT NULL COMMENT '密码哈希',
+  `nickname` VARCHAR(100) COMMENT '昵称',
+  `status` INT DEFAULT 1 COMMENT '状态: 1正常 0禁用',
+  `is_active` BOOLEAN DEFAULT TRUE COMMENT '是否激活',
+  `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  
+  INDEX `idx_username` (`username`),
+  INDEX `idx_email` (`email`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户表';
+
+CREATE TABLE `user_packages` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY COMMENT '关联ID',
+  `user_id` INT NOT NULL COMMENT '用户ID',
+  `package_id` INT NOT NULL COMMENT '包裹ID',
+  `package_name` VARCHAR(100) COMMENT '包裹名称',
+  `description` VARCHAR(500) COMMENT '包裹描述',
+  `is_active` BOOLEAN DEFAULT TRUE COMMENT '是否激活',
+  `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  
+  INDEX `idx_user_id` (`user_id`),
+  INDEX `idx_package_id` (`package_id`),
+  UNIQUE KEY `uk_user_package` (`user_id`, `package_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户包裹关联表';
+
+CREATE TABLE `devices` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY COMMENT '设备ID',
+  `device_id` VARCHAR(100) UNIQUE NOT NULL COMMENT '设备唯一标识',
+  `device_name` VARCHAR(200) COMMENT '设备名称',
+  `description` VARCHAR(500) COMMENT '设备描述',
+  `secret_key` VARCHAR(255) NOT NULL COMMENT '设备密钥（HMAC签名用）',
+  `is_active` BOOLEAN DEFAULT TRUE COMMENT '是否激活',
+  `last_seen` DATETIME COMMENT '最后活跃时间',
+  `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  
+  INDEX `idx_device_id` (`device_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='设备表';
 ```
 
 ### 索引说明
 
-- **idx_package_id**: 用于快速查询指定包裹的所有记录
-- **idx_timestamp**: 用于按时间范围查询
-- **idx_package_timestamp**: 复合索引，优化同时按包裹和时间查询的性能
+- **package_records.idx_package_timestamp**: 复合索引，优化按包裹ID和时间戳查询的性能
+- **users.idx_username**: 用于快速查找用户（登录时使用）
+- **user_packages.uk_user_package**: 唯一索引，确保每个用户对每个包裹只有一条绑定记录
+- **devices.idx_device_id**: 用于快速查找设备（设备认证时使用）
 
 ---
 
@@ -958,6 +1173,123 @@ alembic upgrade head
 
 如有问题或建议，请联系开发团队。
 
-**文档版本**: 1.0.0  
-**最后更新**: 2024-11-26  
+---
+
+## 🔐 认证与授权系统
+
+### 用户认证（JWT）
+
+**位置**: `app/utils/auth.py`
+
+系统使用 JWT (JSON Web Token) 进行用户认证：
+
+```python
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+    """
+    创建 JWT Token
+    
+    Args:
+        data: 用户数据（user_id, username）
+        expires_delta: Token过期时间（默认7天）
+        
+    Returns:
+        JWT Token 字符串
+    """
+    to_encode = data.copy()
+    expire = datetime.utcnow() + (expires_delta or timedelta(days=7))
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
+```
+
+### 设备认证（HMAC-SHA256）
+
+**位置**: `app/utils/security.py`
+
+ESP32设备使用 HMAC-SHA256 签名进行认证：
+
+```python
+def build_signature_data(
+    package_id: int,
+    max_temperature: float,
+    avg_humidity: float,
+    over_threshold_time: int,
+    timestamp: int
+) -> str:
+    """
+    构建签名字符串
+    
+    格式：package_id={id}&max_temperature={temp}&avg_humidity={hum}&over_threshold_time={time}&timestamp={ts}
+    """
+    return (
+        f"package_id={package_id}&max_temperature={max_temperature}"
+        f"&avg_humidity={avg_humidity}&over_threshold_time={over_threshold_time}"
+        f"&timestamp={timestamp}"
+    )
+
+def verify_hmac_signature(sign_data: str, signature: str, secret_key: str) -> bool:
+    """
+    验证 HMAC-SHA256 签名
+    
+    Args:
+        sign_data: 签名字符串
+        signature: 客户端提供的签名（十六进制）
+        secret_key: 设备密钥
+        
+    Returns:
+        True 如果签名有效，否则 False
+    """
+    expected_signature = hmac.new(
+        secret_key.encode(),
+        sign_data.encode(),
+        hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(expected_signature, signature)
+```
+
+### 权限控制
+
+**位置**: `app/api/v1/endpoints/package.py`
+
+用户只能查看自己绑定的包裹数据：
+
+```python
+# 检查包裹所有权
+if not user_package_repo.check_package_ownership(current_user.user_id, package_id):
+    raise HTTPException(403, detail="Access denied")
+```
+
+---
+
+## 📊 数据模型说明
+
+### PackageRecord（包裹记录）
+
+每条记录代表包裹到达一个站点后的环境监测数据：
+
+- `max_temperature`: 该站点期间的最高温度
+- `avg_humidity`: 该站点期间的平均湿度
+- `over_threshold_time`: 温度超过阈值的时间（秒）
+- `timestamp`: 记录时间戳
+
+### UserPackage（用户包裹关联）
+
+用于管理用户与包裹的绑定关系：
+
+- 一个用户可以绑定多个包裹
+- 一个包裹可以被多个用户绑定
+- 通过 `is_active` 字段控制绑定状态
+
+### Device（设备）
+
+ESP32设备信息：
+
+- `device_id`: 设备唯一标识
+- `secret_key`: 用于HMAC签名的密钥（只在创建时返回一次）
+- `is_active`: 设备是否激活（未激活的设备无法上传数据）
+
+---
+
+**文档版本**: 2.0.0  
+**最后更新**: 2024-12-02  
 **维护人员**: 后端开发团队

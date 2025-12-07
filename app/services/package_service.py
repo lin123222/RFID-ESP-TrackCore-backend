@@ -68,24 +68,10 @@ class PackageService:
         
         return PackageHistoryResponse(
             package_id=package_id,
-            total_records=total,
+            total=total,
             records=[PackageRecordResponse.model_validate(r) for r in records]
         )
     
-    def get_latest_record(self, package_id: int) -> PackageRecordResponse | None:
-        """
-        获取包裹最新记录
-        
-        Args:
-            package_id: 包裹ID
-            
-        Returns:
-            最新记录或 None
-        """
-        record = self.repository.get_latest_by_package_id(package_id)
-        if record:
-            return PackageRecordResponse.model_validate(record)
-        return None
     
     def _check_temperature_alert(self, package_id: int, temperature: float) -> None:
         """

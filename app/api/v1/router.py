@@ -9,5 +9,6 @@ api_router.include_router(health.router, prefix="", tags=["Health"])
 api_router.include_router(package.router, prefix="", tags=["Package"])
 api_router.include_router(auth.router, prefix="/auth", tags=["Authentication"])
 api_router.include_router(user_packages.router, prefix="/packages", tags=["User Packages"])
-api_router.include_router(monitor.router, prefix="/monitor", tags=["Data Monitor"])
+# monitor 路由已移除 - 只保留 packages/{id}/records 接口
+# api_router.include_router(monitor.router, prefix="/monitor", tags=["Data Monitor"])
 api_router.include_router(device.router, prefix="", tags=["Device"])

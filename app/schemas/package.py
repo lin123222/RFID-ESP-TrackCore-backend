@@ -76,17 +76,17 @@ class PackageRecordResponse(BaseModel):
 
 
 class PackageHistoryResponse(BaseModel):
-    """包裹历史记录响应模型"""
+    """包裹历史记录响应模型（所有站点记录）"""
     
     package_id: int = Field(..., description="包裹ID")
-    total_records: int = Field(..., description="总记录数")
-    records: List[PackageRecordResponse] = Field(..., description="记录列表")
+    total: int = Field(..., description="总记录数")
+    records: List[PackageRecordResponse] = Field(..., description="记录列表（按时间倒序）")
     
     class Config:
         json_schema_extra = {
             "example": {
                 "package_id": 1001,
-                "total_records": 2,
+                "total": 5,
                 "records": [
                     {
                         "id": 1,
@@ -96,6 +96,15 @@ class PackageHistoryResponse(BaseModel):
                         "over_threshold_time": 3600,
                         "timestamp": 1700000000,
                         "created_at": "2024-11-26T14:30:00"
+                    },
+                    {
+                        "id": 2,
+                        "package_id": 1001,
+                        "max_temperature": 27.3,
+                        "avg_humidity": 63.8,
+                        "over_threshold_time": 1800,
+                        "timestamp": 1700003600,
+                        "created_at": "2024-11-26T15:30:00"
                     }
                 ]
             }
