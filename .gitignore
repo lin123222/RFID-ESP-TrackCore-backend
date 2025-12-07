@@ -48,3 +48,7 @@ htmlcov/
 
 # Alembic
 alembic/versions/*.pyc
+
+# 其他
+*.rar
+*.zip

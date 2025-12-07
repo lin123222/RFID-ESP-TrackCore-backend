@@ -11,6 +11,8 @@ from app.schemas.package import (
 )
 from app.services.package_service import PackageService
 from app.repositories.package_repository import PackageRepository
+from app.api.deps import verify_device_authentication
+from app.models.device import Device
 
 router = APIRouter()
 
@@ -24,11 +26,18 @@ def get_package_service(db: Session = Depends(get_db)) -> PackageService:
 @router.post("/upload", response_model=Dict[str, Any], tags=["Package"])
 async def upload_package_data(
     payload: PackageUploadRequest,
+    device: Device = Depends(verify_device_authentication),  # 添加设备认证
     service: PackageService = Depends(get_package_service)
 ):
     """
-    接收 ESP32 上传的 RFID 包裹数据
+    接收 ESP32 上传的 RFID 包裹数据（需要设备认证）
     
+    请求头要求：
+    - **X-Device-ID**: 设备唯一标识（如：ESP32-001）
+    - **X-Signature**: HMAC-SHA256 签名
+    - **X-Timestamp**: Unix时间戳（秒）
+    
+    请求体：
     - **package_id**: 包裹ID（正整数）
     - **max_temperature**: 最高温度值（-50 ~ 100°C）
     - **avg_humidity**: 平均湿度值（0 ~ 100%）
@@ -37,6 +46,7 @@ async def upload_package_data(
     """
     try:
         result = service.save_package_data(payload)
+        logger.info(f"Data uploaded by device: {device.device_id}")
         return result
     except Exception as e:
         logger.error(f"Upload failed: {str(e)}")
