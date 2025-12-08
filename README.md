@@ -173,8 +173,6 @@ Content-Type: application/json
 | username | VARCHAR(50) | 用户名，唯一 |
 | email | VARCHAR(100) | 邮箱 |
 | password_hash | VARCHAR(255) | 密码哈希 |
-| nickname | VARCHAR(100) | 昵称 |
-| status | INT | 状态：1正常 0禁用 |
 | is_active | BOOLEAN | 是否激活 |
 | created_at | TIMESTAMP | 创建时间 |
 | updated_at | TIMESTAMP | 更新时间 |

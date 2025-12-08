@@ -58,7 +58,7 @@ class UserService:
             )
         
         # 检查用户状态
-        if not db_user.is_active or db_user.status != 1:
+        if not db_user.is_active:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="User account is disabled"
@@ -88,6 +88,15 @@ class UserService:
     
     def update_user_info(self, user_id: int, user_data: UserUpdateRequest) -> UserResponse:
         """更新用户信息"""
+        # 检查用户名是否已被其他用户使用
+        if user_data.username:
+            existing_user = self.user_repo.get_user_by_username(user_data.username)
+            if existing_user and existing_user.id != user_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Username already registered by another user"
+                )
+        
         # 检查邮箱是否已被其他用户使用
         if user_data.email:
             existing_user = self.user_repo.get_user_by_email(user_data.email)

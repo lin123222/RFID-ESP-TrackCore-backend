@@ -17,8 +17,7 @@ class UserRepository:
         db_user = User(
             username=user_data.username,
             email=user_data.email,
-            password_hash=password_hash,
-            nickname=user_data.nickname or user_data.username
+            password_hash=password_hash
         )
         self.db.add(db_user)
         self.db.commit()

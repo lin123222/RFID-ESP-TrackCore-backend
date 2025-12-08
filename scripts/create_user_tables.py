@@ -35,8 +35,6 @@ def create_user_tables():
                     username VARCHAR(50) UNIQUE NOT NULL COMMENT '用户名',
                     email VARCHAR(100) NULL COMMENT '邮箱',
                     password_hash VARCHAR(255) NOT NULL COMMENT '密码哈希',
-                    nickname VARCHAR(100) NULL COMMENT '昵称',
-                    status INT DEFAULT 1 NOT NULL COMMENT '状态: 1正常 0禁用',
                     is_active BOOLEAN DEFAULT TRUE NOT NULL COMMENT '是否激活',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL COMMENT '创建时间',
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL COMMENT '更新时间',
@@ -99,8 +97,8 @@ def create_test_user(engine):
             
             # 创建测试用户
             conn.execute(text("""
-                INSERT INTO users (username, email, password_hash, nickname, status, is_active)
-                VALUES ('admin', 'admin@example.com', :password_hash, '管理员', 1, 1)
+                INSERT INTO users (username, email, password_hash, is_active)
+                VALUES ('admin', 'admin@example.com', :password_hash, 1)
             """), {"password_hash": password_hash})
             conn.commit()
         

@@ -15,10 +15,8 @@ class User(Base):
     username = Column(String(50), unique=True, nullable=False, index=True, comment="用户名")
     email = Column(String(100), nullable=True, comment="邮箱")
     password_hash = Column(String(255), nullable=False, comment="密码哈希")
-    nickname = Column(String(100), nullable=True, comment="昵称")
     
     # 状态字段
-    status = Column(Integer, default=1, nullable=False, comment="状态: 1正常 0禁用")
     is_active = Column(Boolean, default=True, nullable=False, comment="是否激活")
     
     # 系统字段

@@ -22,7 +22,6 @@ async def register_user(
     - **username**: 用户名 (3-50字符)
     - **email**: 邮箱 (可选)
     - **password**: 密码 (6-50字符)
-    - **nickname**: 昵称 (可选)
     """
     user = user_service.register_user(user_data)
     return SuccessResponse(
@@ -73,8 +72,8 @@ async def update_current_user(
     """
     更新当前用户信息
     
+    - **username**: 用户名 (可选，3-50字符)
     - **email**: 邮箱 (可选)
-    - **nickname**: 昵称 (可选)
     """
     user = user_service.update_user_info(current_user.user_id, user_data)
     return SuccessResponse(

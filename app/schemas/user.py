@@ -8,7 +8,6 @@ class UserRegisterRequest(BaseModel):
     username: str = Field(..., min_length=3, max_length=50, description="用户名")
     email: Optional[EmailStr] = Field(None, description="邮箱")
     password: str = Field(..., min_length=6, max_length=50, description="密码")
-    nickname: Optional[str] = Field(None, max_length=100, description="昵称")
 
 
 # 用户登录请求
@@ -19,8 +18,8 @@ class UserLoginRequest(BaseModel):
 
 # 用户信息更新请求
 class UserUpdateRequest(BaseModel):
+    username: Optional[str] = Field(None, min_length=3, max_length=50, description="用户名")
     email: Optional[EmailStr] = Field(None, description="邮箱")
-    nickname: Optional[str] = Field(None, max_length=100, description="昵称")
 
 
 # 密码修改请求
@@ -34,8 +33,6 @@ class UserResponse(BaseModel):
     id: int
     username: str
     email: Optional[str] = None
-    nickname: Optional[str] = None
-    status: int
     is_active: bool
     created_at: datetime
     updated_at: datetime

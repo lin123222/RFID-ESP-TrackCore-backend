@@ -31,8 +31,7 @@ def test_user_registration():
     user_data = {
         "username": "testuser",
         "email": "test@example.com",
-        "password": "123456",
-        "nickname": "测试用户"
+        "password": "123456"
     }
     
     try:

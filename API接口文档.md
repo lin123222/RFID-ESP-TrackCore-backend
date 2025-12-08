@@ -76,8 +76,7 @@ ESP32设备上传数据需要使用设备认证，需要在请求头中携带：
 {
     "username": "user123",           // 必填，用户名，3-50字符
     "email": "user@example.com",     // 可选，邮箱
-    "password": "password123",       // 必填，密码，6-50字符
-    "nickname": "用户昵称"           // 可选，昵称
+    "password": "password123"        // 必填，密码，6-50字符
 }
 ```
 
@@ -90,8 +89,6 @@ ESP32设备上传数据需要使用设备认证，需要在请求头中携带：
         "id": 1,
         "username": "user123",
         "email": "user@example.com",
-        "nickname": "用户昵称",
-        "status": 1,
         "is_active": true,
         "created_at": "2024-12-02T15:30:00Z",
         "updated_at": "2024-12-02T15:30:00Z"
@@ -141,8 +138,6 @@ ESP32设备上传数据需要使用设备认证，需要在请求头中携带：
         "id": 1,
         "username": "user123",
         "email": "user@example.com",
-        "nickname": "用户昵称",
-        "status": 1,
         "is_active": true,
         "created_at": "2024-12-02T15:30:00Z",
         "updated_at": "2024-12-02T15:30:00Z"
@@ -158,8 +153,8 @@ ESP32设备上传数据需要使用设备认证，需要在请求头中携带：
 **请求参数**:
 ```json
 {
-    "email": "newemail@example.com",  // 可选，新邮箱
-    "nickname": "新昵称"              // 可选，新昵称
+    "username": "newusername",        // 可选，新用户名，3-50字符
+    "email": "newemail@example.com"   // 可选，新邮箱
 }
 ```
 
